@@ -10,7 +10,7 @@
 <link rel="apple-touch-icon" href="icon-192.png">
 <title>Yelo! Messenger</title>
 <style>
-:root{--bg:#0b0b0b;--card:#161616;--line:#2a2a2a;--gold:#d4af37;--gold2:#f1d77a;--text:#fff;--muted:#9a9a9a}
+:root{--bg:#0b0b0b;--card:#161616;--line:#2a2a2a;--gold:#d4af37;--gold2:#f1d77a;--text:#fff;--muted:#9a9a9a;--red:#e5484d}
 *{box-sizing:border-box}
 html,body{margin:0;min-height:100%;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
 body{padding-top:env(safe-area-inset-top,0px)}
@@ -23,11 +23,14 @@ nav button.on{color:var(--gold);font-weight:700}
 .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:12px;margin-bottom:10px}
 .gold{background:linear-gradient(135deg,#b8860b,var(--gold2),var(--gold));color:#111;border:0;border-radius:12px;padding:10px 14px;font-weight:700;cursor:pointer}
 .ghost{background:none;border:1px solid var(--line);color:var(--text);border-radius:12px;padding:9px 12px;cursor:pointer}
+.danger{background:none;border:1px solid var(--red);color:var(--red);border-radius:12px;padding:9px 12px;cursor:pointer}
 input,textarea,select{width:100%;background:#0f0f0f;border:1px solid var(--line);color:var(--text);border-radius:12px;padding:10px 12px;font-size:16px;margin:4px 0 8px}
+input[type=checkbox],input[type=radio]{width:auto;margin:0 6px 0 0}
 .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 .badge{background:var(--gold);color:#111;border-radius:999px;padding:1px 8px;font-size:12px;font-weight:700}
 .muted{color:var(--muted);font-size:13px}
 .tag{display:inline-block;border:1px solid var(--gold);color:var(--gold);border-radius:999px;padding:1px 8px;font-size:11px;margin-left:6px}
+.tag.red{border-color:var(--red);color:var(--red)}
 .bubble{max-width:78%;padding:8px 12px;border-radius:14px;margin:6px 0;font-size:15px}
 .me{margin-left:auto;background:linear-gradient(135deg,#b8860b,var(--gold));color:#111}
 .them{background:var(--card);border:1px solid var(--line)}
@@ -36,6 +39,7 @@ input,textarea,select{width:100%;background:#0f0f0f;border:1px solid var(--line)
 .notice{font-size:12px;color:var(--gold);border:1px dashed var(--gold);border-radius:10px;padding:8px;margin-bottom:10px}
 .overlay{position:fixed;inset:0;background:rgba(0,0,0,.92);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;z-index:9;text-align:center}
 .hidden{display:none}
+.pre{white-space:pre-line}
 </style>
 </head>
 <body>
@@ -53,7 +57,19 @@ input,textarea,select{width:100%;background:#0f0f0f;border:1px solid var(--line)
 
 <script>
 const KEY = 'yelo.v1';
-const blank = {profile:{name:'My Business',phone:'',address:''},chats:[],products:[],statuses:[],calls:[],listings:[],admin:{pin:'',payTo:''}};
+const blank = {profile:{name:'My Business',phone:'',address:''},chats:[],products:[],statuses:[],calls:[],listings:[],connections:[],reports:[],admin:{pin:'',payTo:''}};
+const CATS = ['Retail','Food & Drink','Services','Construction','Agriculture','Transport','Health','Other'];
+const REASONS = ['Fake or misleading listing','Scam or fraud','Illegal goods or services','Harassment or threats','False status or offer','Other'];
+const RULES = `Community rules (Yelo! Messenger)
+1. Do not post false, misleading or fake listings, statuses or offers.
+2. Do not sell illegal goods or services, or break PNG law.
+3. Do not harass, threaten or scam other users.
+4. Rate businesses honestly, and only after a real connection.
+5. Breaking these rules leads to your listing being blocked automatically.
+6. Reports are reviewed. Only legitimate reports are acted on.
+7. Reports you agree to may be sent to the relevant authorities.`;
+const DISCLAIMER = 'Yelo! is a platform that helps small businesses connect with customers. Yelo! does not guarantee the quality, safety or legality of any product, service or business listed. Businesses are responsible for complying with PNG laws, including licensing and consumer protection. Information is provided as is, and Yelo! is not liable for losses arising from transactions between users.';
+
 let db;
 let tab = 'chats', openChat = null;
 
@@ -62,6 +78,7 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 const fmt = t => new Date(t).toLocaleString([], {day:'numeric', month:'short', hour:'2-digit', minute:'2-digit'});
 const kina = n => 'PGK ' + Number(n || 0).toFixed(2);
+const listingById = id => db.listings.find(x => x.id === id);
 
 function load(){
   try { db = Object.assign(structuredClone(blank), JSON.parse(localStorage.getItem(KEY) || '{}')); }
@@ -70,6 +87,21 @@ function load(){
 function save(){
   try { localStorage.setItem(KEY, JSON.stringify(db)); return true; }
   catch(e){ alert('Could not save on this device. Storage may be full or blocked.'); return false; }
+}
+async function saveFile(name, text){
+  if (window.claude){
+    const dl = await claude.use('downloads');
+    if (dl){
+      try { await dl.save({filename: name, data: text}); return true; }
+      catch(e){ if (!e || e.code !== 'declined') alert('The file was not saved.'); return false; }
+    }
+  }
+  const url = URL.createObjectURL(new Blob([text], {type: 'application/json'}));
+  const a = document.createElement('a');
+  a.href = url; a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  return true;
 }
 
 function setTab(t){ tab = t; openChat = null; render(); }
@@ -81,7 +113,6 @@ function render(){
   const views = {chats: renderChats, catalog: renderCatalog, status: renderStatus, calls: renderCalls, directory: renderDirectory, admin: renderAdmin, profile: renderProfile};
   $('#view').innerHTML = views[tab]();
   document.querySelectorAll('nav button').forEach(b => b.classList.toggle('on', b.dataset.t === tab));
-  // Restore focus so typing in the search box is not interrupted.
   if (focusId && focusId !== 'pin' && focusId !== 'rv') {
     const n = document.getElementById(focusId);
     if (n) { n.focus(); try { n.setSelectionRange(caret, caret); } catch (e) {} }
@@ -99,7 +130,7 @@ function renderChats(){
       <div style="margin-top:10px">${c.msgs.map(m => `<div class="bubble ${m.from === 'me' ? 'me' : 'them'}">${esc(m.text)}
         <div style="font-size:11px;opacity:.7">${fmt(m.t)}</div></div>`).join('') || '<p class="muted">No messages yet.</p>'}</div>
       <div class="row"><input id="msg" placeholder="Type a message" style="margin:0"><button class="gold" onclick="sendMsg()">Send</button></div>
-      <p class="muted">Messages are saved on this device only. They do not reach the customer's phone yet.</p>`;
+      <p class="muted">Messages are saved on this device only. They do not reach the other person's phone yet.</p>`;
   }
   const q = ($('#q') ? $('#q').value : '').toLowerCase();
   const list = db.chats.filter(c => c.name.toLowerCase().includes(q) || (c.phone || '').includes(q));
@@ -219,28 +250,103 @@ function startCall(id, kind){
   render();
 }
 
-/* ---------- DIRECTORY (simulated) ---------- */
-const CATS = ['Retail','Food & Drink','Services','Construction','Agriculture','Transport','Health','Other'];
-let reg = null; // registration in progress: {step, name, category, town, phone, desc}
+/* ---------- DIRECTORY ---------- */
+let reg = null;          // registration in progress
+let reportFor = null;    // listing id being reported
+
+function ratingAvg(l){
+  const r = l.ratings || [];
+  return r.length ? r.reduce((a, b) => a + b, 0) / r.length : 0;
+}
 
 function renderDirectory(){
   const mine = db.listings.find(l => l.mine);
   const q = ($('#dq') ? $('#dq').value : '').toLowerCase();
-  const list = db.listings.filter(l => !l.mine && l.verified &&
+  const list = db.listings.filter(l => !l.mine && l.verified && !l.blocked &&
     (!q || l.name.toLowerCase().includes(q) || l.category.toLowerCase().includes(q) || l.town.toLowerCase().includes(q)));
   let top;
   if (!mine) top = regCard();
+  else if (mine.blocked) top = `<div class="card"><strong>${esc(mine.name)}</strong> <span class="tag red">Blocked</span>
+      <div class="muted">Your listing is blocked pending review, so you cannot connect with businesses or be shown in the directory.</div></div>`;
   else if (!mine.verified) top = `<div class="card"><strong>${esc(mine.name)}</strong> <span class="tag">${mine.paid ? 'Waiting for verification' : 'Awaiting payment check'}</span>
       <div class="muted">Reference ${esc(mine.ref)}. Your listing goes live once it is checked.</div></div>`;
   else top = `<div class="card"><strong>${esc(mine.name)}</strong> <span class="tag">Verified</span>
       <div class="muted">Your listing is shown in the directory.</div></div>`;
-  return `<div class="notice">Directory is a prototype. Listings are saved on this device only, so other businesses cannot see them yet. Payments and verification codes are simulated.</div>
+  return `<div class="notice">Directory is a prototype. Listings, connections, ratings and reports are saved on this device only, so they are not shared yet. Payments, verification codes and business replies are simulated.</div>
     ${top}
+    ${reportFor ? reportForm() : ''}
     <input id="dq" type="search" autocomplete="off" enterkeyhint="search" placeholder="Search by name, category or town" value="${esc(q)}" oninput="render()">
-    ${list.map(l => `<div class="card"><strong>${esc(l.name)}</strong> <span class="tag">${esc(l.category)}</span>
-      <div class="muted">${esc(l.town)} · ${esc(l.phone)}</div><div style="margin-top:6px">${esc(l.desc)}</div></div>`).join('')
-      || '<p class="muted">No verified businesses to show yet.</p>'}`;
+    ${list.map(listingCard).join('') || '<p class="muted">No verified businesses to show yet.</p>'}`;
 }
+
+function listingCard(l){
+  const conn = db.connections.find(c => c.listingId === l.id);
+  const avg = ratingAvg(l);
+  let action;
+  if (!conn) action = `<button class="gold" onclick="connect('${l.id}')">Connect</button>`;
+  else if (conn.status === 'pending') action = `<span class="muted">Request sent.</span>
+      <button class="ghost" onclick="simReply('${conn.id}',true)">Simulate: accepts</button>
+      <button class="ghost" onclick="simReply('${conn.id}',false)">Simulate: declines</button>`;
+  else if (conn.status === 'accepted') action = conn.rating
+      ? `<span class="muted">You rated ${conn.rating}★</span>`
+      : `<span class="muted">Rate this business:</span>` + [1,2,3,4,5].map(n => `<button class="ghost" onclick="rate('${conn.id}',${n})">${n}★</button>`).join('');
+  else action = `<span class="muted">Request declined.</span>`;
+  return `<div class="card"><strong>${esc(l.name)}</strong> <span class="tag">${esc(l.category)}</span>
+    <div class="muted">${esc(l.town)} · ${esc(l.phone)} · ${avg ? avg.toFixed(1) + '★ (' + l.ratings.length + ' ratings)' : 'No ratings yet'}</div>
+    <div style="margin-top:6px">${esc(l.desc)}</div>
+    <div class="row" style="margin-top:8px">${action}<button class="danger" onclick="openReport('${l.id}')">Report</button></div></div>`;
+}
+
+function connect(lid){
+  const mine = db.listings.find(l => l.mine);
+  if (mine && mine.blocked) return alert('Your listing is blocked, so you cannot connect with businesses.');
+  db.connections.push({id: uid(), listingId: lid, status: 'pending', t: Date.now()});
+  save(); render();
+}
+function simReply(cid, accepted){
+  const conn = db.connections.find(c => c.id === cid); if (!conn) return;
+  const l = listingById(conn.listingId);
+  conn.status = accepted ? 'accepted' : 'declined';
+  if (accepted && l){
+    const chatId = uid();
+    conn.chatId = chatId;
+    db.chats.unshift({id: chatId, name: l.name, phone: l.phone, unread: 1,
+      msgs: [{from: 'them', text: 'Thanks for connecting. You can now message us here. (simulated)', t: Date.now()}]});
+  }
+  save(); render();
+}
+function rate(cid, n){
+  const conn = db.connections.find(c => c.id === cid);
+  if (!conn || conn.rating) return;
+  const l = listingById(conn.listingId); if (!l) return;
+  conn.rating = n;
+  l.ratings = (l.ratings || []).concat(n);
+  save(); render();
+}
+
+/* ---------- REPORTING ---------- */
+function openReport(lid){ reportFor = lid; render(); }
+function reportForm(){
+  const l = listingById(reportFor);
+  if (!l) { reportFor = null; return ''; }
+  return `<div class="card"><strong>Report ${esc(l.name)}</strong>
+    <select id="rr2">${REASONS.map(r => `<option>${esc(r)}</option>`).join('')}</select>
+    <textarea id="rdt" rows="3" placeholder="What happened? Give details."></textarea>
+    <label class="muted" style="display:block;margin:6px 0"><input type="checkbox" id="rag"> I agree that Yelo! may send this report to the relevant authorities.</label>
+    <div class="row"><button class="gold" onclick="submitReport()">Submit report</button><button class="ghost" onclick="reportFor=null;render()">Cancel</button></div>
+    <p class="muted">False or abusive reports can lead to your own account being blocked.</p></div>`;
+}
+function submitReport(){
+  const detail = $('#rdt').value.trim();
+  if (!detail) return alert('Please describe what happened.');
+  db.reports.unshift({id: uid(), listingId: reportFor, reason: $('#rr2').value, detail,
+    consent: $('#rag').checked, status: 'open', t: Date.now()});
+  reportFor = null; save();
+  alert('Report received. Thank you. It will be reviewed.');
+  render();
+}
+
+/* ---------- REGISTRATION ---------- */
 function regCard(){
   if (!reg) reg = {step: 'form', name: '', category: CATS[0], town: '', phone: '', desc: ''};
   if (reg.step === 'form') return `<div class="card"><strong>Register your business</strong>
@@ -249,6 +355,12 @@ function regCard(){
     <input id="rt" placeholder="Town" value="${esc(reg.town)}">
     <input id="rp" placeholder="Phone number" value="${esc(reg.phone)}">
     <textarea id="rd" rows="2" maxlength="200" placeholder="Short description (max 200 characters)">${esc(reg.desc)}</textarea>
+    <div class="muted" style="margin-top:6px">Where should your data be kept?</div>
+    <label class="muted" style="display:block"><input type="radio" name="rs" checked> On this device (download a backup regularly)</label>
+    <label class="muted" style="display:block"><input type="radio" name="rs" disabled> Cloud (available once the backend is live)</label>
+    <label class="muted" style="display:block;margin-top:8px"><input type="checkbox" id="ra"> I accept the community rules and the disclaimer below.</label>
+    <p class="muted pre" style="font-size:12px">${esc(RULES)}</p>
+    <p class="muted" style="font-size:12px">${esc(DISCLAIMER)}</p>
     <button class="gold" onclick="regNext()">Continue</button></div>`;
   if (reg.step === 'verify') return `<div class="card"><strong>Verify your phone</strong>
     <div class="muted">Simulated: a 6-digit code would be sent by SMS to ${esc(reg.phone)}. In this prototype, the code is 123456.</div>
@@ -261,6 +373,7 @@ function regCard(){
     <button class="gold" onclick="regSubmit()">I have paid</button></div>`;
 }
 function regNext(){
+  if (!$('#ra').checked) return alert('Please accept the community rules and disclaimer.');
   reg.name = $('#rn').value.trim(); reg.category = $('#rc').value; reg.town = $('#rt').value.trim();
   reg.phone = $('#rp').value.trim(); reg.desc = $('#rd').value.trim().slice(0, 200);
   if (!reg.name || !reg.town || !reg.phone) return alert('Enter business name, town and phone number');
@@ -275,15 +388,143 @@ function regSubmit(){
   const pr = $('#rr').value.trim();
   if (!pr) return alert('Enter your payment reference');
   db.listings.unshift({id: uid(), mine: true, name: reg.name, category: reg.category, town: reg.town,
-    phone: reg.phone, desc: reg.desc, ref: reg.ref, payRef: pr, paid: false, verified: false, t: Date.now()});
+    phone: reg.phone, desc: reg.desc, ref: reg.ref, payRef: pr, paid: false, verified: false,
+    blocked: false, ratings: [], t: Date.now()});
   reg = null; save(); render();
 }
 
 /* ---------- ADMIN DASHBOARD ---------- */
 let adminOpen = false;
+let pinFails = 0;
 
 function renderAdmin(){
   if (!adminOpen){
     const first = !db.admin.pin || db.admin.pin.length !== 64;
     return `<div class="card"><strong>${first ? 'Create admin PIN' : 'Admin login'}</strong>
-      <div class="muted">${first ? 'Choose a PIN for this device. Only you should know it.' : 'Ente
+      <div class="muted">${first ? 'Choose a PIN (6 to 8 digits) for this device. Only you should know it.' : 'Enter your admin PIN.'}</div>
+      <input id="pin" type="password" inputmode="numeric" maxlength="8" placeholder="PIN">
+      <button class="gold" onclick="adminAuth()">${first ? 'Save PIN' : 'Unlock'}</button></div>`;
+  }
+  const L = db.listings;
+  const pendingPay = L.filter(l => !l.paid);
+  const pendingVerify = L.filter(l => l.paid && !l.verified);
+  const live = L.filter(l => l.verified);
+  const openReports = db.reports.filter(r => r.status === 'open');
+  const underReview = L.filter(l => ratingAvg(l) && l.ratings.length >= 3 && ratingAvg(l) < 2.5);
+  const row = (l, actions) => `<div class="card"><strong>${esc(l.name)}</strong> <span class="tag">${esc(l.category)}</span>
+    ${l.blocked ? '<span class="tag red">Blocked</span>' : ''}${underReview.includes(l) ? '<span class="tag red">Under review</span>' : ''}
+    <div class="muted">${esc(l.town)} · ${esc(l.phone)} · Ref ${esc(l.ref)}${l.payRef ? ' · Paid ref ' + esc(l.payRef) : ''}${ratingAvg(l) ? ' · ' + ratingAvg(l).toFixed(1) + '★ (' + l.ratings.length + ')' : ''}</div>
+    <div class="row" style="margin-top:8px">${actions}</div></div>`;
+  const stat = (label, n) => `<div class="row" style="justify-content:space-between"><span>${label}</span><span class="price">${n}</span></div>`;
+  return `<div class="notice">This dashboard only sees data saved on this device. A live dashboard for all businesses needs the Supabase backend.</div>
+    <div class="card"><strong>Overview</strong>
+      ${stat('Registered', L.length)}${stat('Awaiting payment', pendingPay.length)}
+      ${stat('Awaiting verification', pendingVerify.length)}${stat('Live', live.length)}
+      ${stat('Open reports', openReports.length)}${stat('Under rating review', underReview.length)}</div>
+    <div class="card"><strong>Payment details shown to businesses</strong>
+      <input id="ap" placeholder="Account or mobile money number" value="${esc(db.admin.payTo)}">
+      <button class="gold" onclick="savePayTo()">Save</button></div>
+    <h3 style="color:var(--gold)">Open reports (${openReports.length})</h3>
+    ${openReports.map(r => { const l = listingById(r.listingId); return `<div class="card"><strong>${esc(l ? l.name : 'Removed listing')}</strong> <span class="tag">${esc(r.reason)}</span>
+      <div class="muted">${fmt(r.t)} · Reporter agrees to send to authorities: ${r.consent ? 'Yes' : 'No'}</div>
+      <div style="margin-top:6px">${esc(r.detail)}</div>
+      <div class="row" style="margin-top:8px">${l ? `<button class="danger" onclick="uphold('${r.id}')">Uphold and block listing</button>` : ''}<button class="ghost" onclick="dismiss('${r.id}')">Dismiss</button></div></div>`; }).join('') || '<p class="muted">None.</p>'}
+    <button class="ghost" onclick="exportReports()">Export upheld reports for authorities</button>
+    <p class="muted">Only upheld reports are exported, and only where the reporter agreed.</p>
+    <h3 style="color:var(--gold)">Awaiting payment (${pendingPay.length})</h3>
+    ${pendingPay.map(l => row(l, `<button class="gold" onclick="adminPaid('${l.id}')">Confirm payment</button><button class="ghost" onclick="adminRemove('${l.id}')">Reject</button>`)).join('') || '<p class="muted">None.</p>'}
+    <h3 style="color:var(--gold)">Awaiting verification (${pendingVerify.length})</h3>
+    ${pendingVerify.map(l => row(l, `<button class="gold" onclick="adminApprove('${l.id}')">Approve</button><button class="ghost" onclick="adminRemove('${l.id}')">Reject</button>`)).join('') || '<p class="muted">None.</p>'}
+    <h3 style="color:var(--gold)">Live (${live.length})</h3>
+    ${live.map(l => row(l, `${l.blocked ? `<button class="gold" onclick="unblock('${l.id}')">Unblock</button>` : `<button class="danger" onclick="blockListing('${l.id}')">Block</button>`}<button class="ghost" onclick="adminRemove('${l.id}')">Remove</button>`)).join('') || '<p class="muted">None.</p>'}
+    <button class="ghost" onclick="adminOpen=false;setTab('profile')">Lock dashboard</button>`;
+}
+async function sha256(text){
+  const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode('yelo-admin|' + text));
+  return [...new Uint8Array(bytes)].map(b => b.toString(16).padStart(2, '0')).join('');
+}
+async function adminAuth(){
+  const v = $('#pin').value.trim();
+  if (!/^\d{6,8}$/.test(v)) return alert('PIN must be 6 to 8 digits');
+  if (!crypto.subtle) return alert('Secure mode is needed. Open the app over HTTPS.');
+  const h = await sha256(v);
+  const hasPin = db.admin.pin && db.admin.pin.length === 64;
+  if (!hasPin){ db.admin.pin = h; save(); adminOpen = true; pinFails = 0; }
+  else if (pinFails >= 5) return alert('Too many wrong attempts. Reload the app to try again.');
+  else if (h === db.admin.pin){ adminOpen = true; pinFails = 0; }
+  else { pinFails++; return alert('Wrong PIN. Attempt ' + pinFails + ' of 5.'); }
+  render();
+}
+function savePayTo(){ db.admin.payTo = $('#ap').value.trim(); save(); alert('Payment details saved.'); }
+function adminPaid(id){ const l = listingById(id); if (l){ l.paid = true; save(); render(); } }
+function adminApprove(id){ const l = listingById(id); if (l){ l.verified = true; save(); render(); } }
+function adminRemove(id){
+  if (confirm('Remove this listing?')){ db.listings = db.listings.filter(x => x.id !== id); save(); render(); }
+}
+function blockListing(id){ const l = listingById(id); if (l && confirm('Block this listing? It will be hidden from the directory.')){ l.blocked = true; save(); render(); } }
+function unblock(id){ const l = listingById(id); if (l){ l.blocked = false; save(); render(); } }
+function uphold(rid){
+  const r = db.reports.find(x => x.id === rid); if (!r) return;
+  r.status = 'upheld';
+  const l = listingById(r.listingId);
+  if (l) l.blocked = true;   // a confirmed breach blocks the listing automatically
+  save(); render();
+}
+function dismiss(rid){
+  const r = db.reports.find(x => x.id === rid); if (!r) return;
+  r.status = 'dismissed'; save(); render();
+}
+async function exportReports(){
+  const out = db.reports.filter(r => r.status === 'upheld' && r.consent).map(r => {
+    const l = listingById(r.listingId);
+    return {reportId: r.id, date: new Date(r.t).toISOString(), listing: l ? {name: l.name, phone: l.phone, town: l.town, ref: l.ref} : null, reason: r.reason, detail: r.detail, status: r.status};
+  });
+  if (!out.length) return alert('No upheld reports with reporter agreement to export.');
+  await saveFile('yelo-authority-reports-' + new Date().toISOString().slice(0, 10) + '.json', JSON.stringify(out, null, 2));
+}
+
+/* ---------- PROFILE & DATA ---------- */
+function renderProfile(){
+  const p = db.profile;
+  return `<div class="card"><button class="gold" onclick="setTab('admin')">Open admin dashboard</button></div>
+    <div class="card"><strong>Community rules</strong>
+    <p class="muted pre">${esc(RULES)}</p>
+    <strong>Disclaimer</strong>
+    <p class="muted">${esc(DISCLAIMER)}</p></div>
+    <div class="card"><strong>Business profile</strong>
+    <input id="bn" placeholder="Business name" value="${esc(p.name)}">
+    <input id="bp" placeholder="Phone number" value="${esc(p.phone)}">
+    <input id="ba" placeholder="Address or town" value="${esc(p.address)}">
+    <button class="gold" onclick="saveProfile()">Save profile</button></div>
+    <div class="card"><strong>Your data</strong>
+    <p class="muted">Everything is stored in this browser on this device. Clearing browser data will erase it. Copy a backup regularly.</p>
+    <textarea id="bk" rows="5" placeholder="Backup text appears here. Paste a backup here to restore."></textarea>
+    <div class="row"><button class="gold" onclick="downloadBackup()">Download backup</button><button class="ghost" onclick="showBackup()">Show backup</button>
+    <button class="ghost" onclick="restore()">Restore</button>
+    <button class="danger" onclick="wipe()">Erase all</button></div></div>`;
+}
+function saveProfile(){
+  db.profile = {name: $('#bn').value.trim() || 'My Business', phone: $('#bp').value.trim(), address: $('#ba').value.trim()};
+  save(); render();
+}
+async function downloadBackup(){
+  const name = 'yelo-backup-' + new Date().toISOString().slice(0, 10) + '.json';
+  await saveFile(name, JSON.stringify(db, null, 2));
+}
+function showBackup(){ $('#bk').value = JSON.stringify(db); }
+function restore(){
+  try { db = Object.assign(structuredClone(blank), JSON.parse($('#bk').value)); save(); render(); alert('Backup restored.'); }
+  catch(e){ alert('That is not a valid Yelo! backup.'); }
+}
+function wipe(){
+  if (confirm('Erase all data on this device?')){ db = structuredClone(blank); save(); openChat = null; adminOpen = false; render(); }
+}
+
+load();
+render();
+if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+  navigator.serviceWorker.register('sw.js').catch(() => {});
+}
+</script>
+</body>
+</html>
