@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0b0b">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<title>Yelo! Business Inbox</title>
+<style>
+:root{--bg:#0b0b0b;--card:#161616;--line:#2a2a2a;--gold:#d4af37;--gold2:#f1d77a;--text:#fff;--muted:#9a9a9a}
+*{box-sizing:border-box}
+html,body{margin:0;min-height:100%;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+body{padding-top:env(safe-area-inset-top,0px)}
+header{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--line);max-width:640px;margin:auto}
+.brand{font-weight:800;font-size:20px;background:linear-gradient(90deg,#b8860b,var(--gold2),var(--gold));-webkit-background-clip:text;background-clip:text;color:transparent}
+main{padding:12px 14px 96px;max-width:640px;margin:auto}
+nav{position:fixed;bottom:0;left:0;right:0;max-width:640px;margin:auto;display:flex;background:#0f0f0f;border-top:1px solid var(--line);padding-bottom:env(safe-area-inset-bottom,0px)}
+nav button{flex:1;background:none;border:0;color:var(--muted);padding:12px 0;font-size:12px}
+nav button.on{color:var(--gold);font-weight:700}
+.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:12px;margin-bottom:10px}
+.gold{background:linear-gradient(135deg,#b8860b,var(--gold2),var(--gold));color:#111;border:0;border-radius:12px;padding:10px 14px;font-weight:700;cursor:pointer}
+.ghost{background:none;border:1px solid var(--line);color:var(--text);border-radius:12px;padding:9px 12px;cursor:pointer}
+input,textarea,select{width:100%;background:#0f0f0f;border:1px solid var(--line);color:var(--text);border-radius:12px;padding:10px 12px;font-size:16px;margin:4px 0 8px}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.badge{background:var(--gold);color:#111;border-radius:999px;padding:1px 8px;font-size:12px;font-weight:700}
+.muted{color:var(--muted);font-size:13px}
+.tag{display:inline-block;border:1px solid var(--gold);color:var(--gold);border-radius:999px;padding:1px 8px;font-size:11px;margin-left:6px}
+.bubble{max-width:78%;padding:8px 12px;border-radius:14px;margin:6px 0;font-size:15px}
+.me{margin-left:auto;background:linear-gradient(135deg,#b8860b,var(--gold));color:#111}
+.them{background:var(--card);border:1px solid var(--line)}
+.price{color:var(--gold2);font-weight:700}
+.thumb{width:56px;height:56px;border-radius:12px;object-fit:cover;background:#222;flex:none}
+.notice{font-size:12px;color:var(--gold);border:1px dashed var(--gold);border-radius:10px;padding:8px;margin-bottom:10px}
+.overlay{position:fixed;inset:0;background:rgba(0,0,0,.92);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;z-index:9;text-align:center}
+.hidden{display:none}
+</style>
+</head>
+<body>
+<header><div class="brand">Yelo!</div><div class="muted" id="biz"></div></header>
+<main id="view"></main>
+<nav>
+  <button data-t="chats" onclick="setTab('chats')">Chats</button>
+  <button data-t="catalog" onclick="setTab('catalog')">Catalog</button>
+  <button data-t="status" onclick="setTab('status')">Status</button>
+  <button data-t="calls" onclick="setTab('calls')">Calls</button>
+  <button data-t="profile" onclick="setTab('profile')">Profile</button>
+</nav>
+<div id="ov" class="overlay hidden"></div>
+
+<script>
+const KEY = 'yelo.v1';
+const blank = {profile:{name:'My Business',phone:'',address:''},chats:[],products:[],statuses:[],calls:[]};
+let db;
+let tab = 'chats', openChat = null;
+
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+const fmt = t => new Date(t).toLocaleString([], {day:'numeric', month:'short', hour:'2-digit', minute:'2-digit'});
+const kina = n => 'PGK ' + Number(n || 0).toFixed(2);
+
+function load(){
+  try { db = Object.assign(structuredClone(blank), JSON.parse(localStorage.getItem(KEY) || '{}')); }
+  catch(e){ db = structuredClone(blank); }
+}
+function save(){
+  try { localStorage.setItem(KEY, JSON.stringify(db)); return true; }
+  catch(e){ alert('Could not save on this device. Storage may be full or blocked.'); return false; }
+}
+
+function setTab(t){ tab = t; openChat = null; render(); }
+
+function render(){
+  $('#biz').textContent = db.profile.name;
+  const views = {chats: renderChats, catalog: renderCatalog, status: renderStatus, calls: renderCalls, profile: renderProfile};
+  $('#view').innerHTML = views[tab]();
+  document.querySelectorAll('nav button').forEach(b => b.classList.toggle('on', b.dataset.t === tab));
+}
+
+/* ---------- CHATS ---------- */
+function renderChats(){
+  if (openChat){
+    const c = db.chats.find(x => x.id === openChat);
+    if (!c){ openChat = null; return renderChats(); }
+    c.unread = 0; save();
+    return `<div class="row"><button class="ghost" onclick="openChat=null;render()">← Back</button>
+      <div><strong>${esc(c.name)}</strong><div class="muted">${esc(c.phone || 'No number saved')}</div></div></div>
+      <div style="margin-top:10px">${c.msgs.map(m => `<div class="bubble ${m.from === 'me' ? 'me' : 'them'}">${esc(m.text)}
+        <div style="font-size:11px;opacity:.7">${fmt(m.t)}</div></div>`).join('') || '<p class="muted">No messages yet.</p>'}</div>
+      <div class="row"><input id="msg" placeholder="Type a message" style="margin:0"><button class="gold" onclick="sendMsg()">Send</button></div>
+      <p class="muted">Messages are saved on this device only. They do not reach the customer's phone yet.</p>`;
+  }
+  const q = ($('#q') ? $('#q').value : '').toLowerCase();
+  const list = db.chats.filter(c => c.name.toLowerCase().includes(q) || (c.phone || '').includes(q));
+  return `<input id="q" placeholder="Search chats" value="${esc(q)}" oninput="render()">
+    <div class="card"><strong>Add customer</strong>
+      <input id="cn" placeholder="Customer name"><input id="cp" placeholder="Phone number">
+      <button class="gold" onclick="addContact()">Add customer</button></div>
+    ${list.map(c => { const last = c.msgs[c.msgs.length - 1]; return `
+      <div class="card" style="cursor:pointer" onclick="openChat='${c.id}';render()">
+        <div class="row" style="justify-content:space-between"><strong>${esc(c.name)}</strong>${c.unread ? `<span class="badge">${c.unread}</span>` : ''}</div>
+        <div class="muted">${last ? esc(last.text) : 'No messages yet'}</div></div>`; }).join('')
+      || '<p class="muted">No customers yet. Add one above.</p>'}
+    <p class="muted"><button class="ghost" onclick="simIncoming()">Simulate incoming message</button> <span class="tag">Simulated</span></p>`;
+}
+function addContact(){
+  const n = $('#cn').value.trim(), p = $('#cp').value.trim();
+  if (!n) return alert('Enter a customer name');
+  db.chats.unshift({id: uid(), name: n, phone: p, unread: 0, msgs: []});
+  save(); render();
+}
+function sendMsg(){
+  const t = $('#msg').value.trim(); if (!t) return;
+  const c = db.chats.find(x => x.id === openChat);
+  c.msgs.push({from: 'me', text: t, t: Date.now()});
+  save(); render();
+}
+function simIncoming(){
+  if (!db.chats.length) db.chats.push({id: uid(), name: 'Demo customer', phone: '', unread: 0, msgs: []});
+  const c = db.chats[0];
+  c.msgs.push({from: 'them', text: 'Hi, is this still available? (simulated)', t: Date.now()});
+  c.unread++; save(); render();
+}
+
+/* ---------- CATALOG ---------- */
+function renderCatalog(){
+  return `<div class="card"><strong>Add product or service</strong>
+    <input id="pn" placeholder="Name">
+    <input id="pp" type="number" min="0" step="0.01" placeholder="Price in PGK (Kina)">
+    <textarea id="pd" rows="2" placeholder="Description"></textarea>
+    <input id="pf" type="file" accept="image/*">
+    <button class="gold" onclick="addProduct()">Save item</button></div>
+    ${db.products.map(p => `<div class="card row">
+      ${p.photo ? `<img class="thumb" src="${p.photo}" alt="">` : `<div class="thumb"></div>`}
+      <div style="flex:1"><strong>${esc(p.name)}</strong> <span class="price">${kina(p.price)}</span>
+        <div class="muted">${esc(p.desc)}</div></div>
+      <button class="ghost" onclick="delProduct('${p.id}')">Remove</button></div>`).join('')
+      || '<p class="muted">Your catalog is empty.</p>'}`;
+}
+async function addProduct(){
+  const name = $('#pn').value.trim();
+  if (!name) return alert('Enter a name');
+  const price = parseFloat($('#pp').value) || 0;
+  const desc = $('#pd').value.trim();
+  const photo = await shrink($('#pf').files[0]);
+  db.products.push({id: uid(), name, price, desc, photo});
+  if (save()) render();
+}
+function shrink(file){
+  return new Promise(res => {
+    if (!file) return res('');
+    const url = URL.createObjectURL(file), img = new Image();
+    img.onload = () => {
+      const s = Math.min(1, 400 / Math.max(img.width, img.height));
+      const c = document.createElement('canvas');
+      c.width = img.width * s; c.height = img.height * s;
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url);
+      res(c.toDataURL('image/jpeg', 0.7));
+    };
+    img.onerror = () => res('');
+    img.src = url;
+  });
+}
+function delProduct(id){ db.products = db.products.filter(p => p.id !== id); save(); render(); }
+
+/* ---------- STATUS ---------- */
+function renderStatus(){
+  return `<div class="card"><strong>Post a status</strong>
+    <select id="sk"><option value="text">Update</option><option value="offer">Offer</option></select>
+    <textarea id="st" rows="2" placeholder="e.g. 10% off all coffee this week"></textarea>
+    <input id="sf" type="file" accept="image/*">
+    <button class="gold" onclick="postStatus()">Post</button></div>
+    ${db.statuses.map(s => `<div class="card">${s.kind === 'offer' ? '<span class="tag">Offer</span>' : ''}
+      ${s.photo ? `<img src="${s.photo}" alt="" style="width:100%;border-radius:12px;margin-top:6px">` : ''}
+      <div style="margin-top:4px">${esc(s.text)}</div><div class="muted">${fmt(s.t)}</div></div>`).join('')
+      || '<p class="muted">No statuses yet.</p>'}
+    <p class="muted">Statuses are saved on this device only.</p>`;
+}
+async function postStatus(){
+  const t = $('#st').value.trim();
+  const photo = await shrink($('#sf').files[0]);
+  if (!t && !photo) return alert('Add some text or a photo');
+  db.statuses.unshift({id: uid(), kind: $('#sk').value, text: t, photo, t:
