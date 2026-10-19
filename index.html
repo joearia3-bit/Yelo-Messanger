@@ -8,7 +8,7 @@
 <link rel="manifest" href="manifest.json">
 <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
 <link rel="apple-touch-icon" href="icon-192.png">
-<title>Yelo! Business Inbox</title>
+<title>Yelo! Messenger</title>
 <style>
 :root{--bg:#0b0b0b;--card:#161616;--line:#2a2a2a;--gold:#d4af37;--gold2:#f1d77a;--text:#fff;--muted:#9a9a9a}
 *{box-sizing:border-box}
@@ -39,20 +39,21 @@ input,textarea,select{width:100%;background:#0f0f0f;border:1px solid var(--line)
 </style>
 </head>
 <body>
-<header><div class="brand">Yelo!</div><div class="muted" id="biz"></div></header>
+<header><div class="row" style="gap:10px"><img src="icon-192.png" alt="Yelo! logo" width="34" height="34" style="border-radius:9px"><div class="brand">Yelo!</div></div><div class="muted" id="biz"></div></header>
 <main id="view"></main>
 <nav>
   <button data-t="chats" onclick="setTab('chats')">Chats</button>
   <button data-t="catalog" onclick="setTab('catalog')">Catalog</button>
   <button data-t="status" onclick="setTab('status')">Status</button>
   <button data-t="calls" onclick="setTab('calls')">Calls</button>
+  <button data-t="directory" onclick="setTab('directory')">Directory</button>
   <button data-t="profile" onclick="setTab('profile')">Profile</button>
 </nav>
 <div id="ov" class="overlay hidden"></div>
 
 <script>
 const KEY = 'yelo.v1';
-const blank = {profile:{name:'My Business',phone:'',address:''},chats:[],products:[],statuses:[],calls:[]};
+const blank = {profile:{name:'My Business',phone:'',address:''},chats:[],products:[],statuses:[],calls:[],listings:[],admin:{pin:'',payTo:''}};
 let db;
 let tab = 'chats', openChat = null;
 
@@ -74,10 +75,17 @@ function save(){
 function setTab(t){ tab = t; openChat = null; render(); }
 
 function render(){
+  const a = document.activeElement;
+  const focusId = a && a.id, caret = a && a.selectionStart;
   $('#biz').textContent = db.profile.name;
-  const views = {chats: renderChats, catalog: renderCatalog, status: renderStatus, calls: renderCalls, profile: renderProfile};
+  const views = {chats: renderChats, catalog: renderCatalog, status: renderStatus, calls: renderCalls, directory: renderDirectory, admin: renderAdmin, profile: renderProfile};
   $('#view').innerHTML = views[tab]();
   document.querySelectorAll('nav button').forEach(b => b.classList.toggle('on', b.dataset.t === tab));
+  // Restore focus so typing in the search box is not interrupted.
+  if (focusId && focusId !== 'pin' && focusId !== 'rv') {
+    const n = document.getElementById(focusId);
+    if (n) { n.focus(); try { n.setSelectionRange(caret, caret); } catch (e) {} }
+  }
 }
 
 /* ---------- CHATS ---------- */
@@ -95,7 +103,7 @@ function renderChats(){
   }
   const q = ($('#q') ? $('#q').value : '').toLowerCase();
   const list = db.chats.filter(c => c.name.toLowerCase().includes(q) || (c.phone || '').includes(q));
-  return `<input id="q" placeholder="Search chats" value="${esc(q)}" oninput="render()">
+  return `<input id="q" type="search" autocomplete="off" enterkeyhint="search" placeholder="Search customers by name or phone" value="${esc(q)}" oninput="render()">
     <div class="card"><strong>Add customer</strong>
       <input id="cn" placeholder="Customer name"><input id="cp" placeholder="Phone number">
       <button class="gold" onclick="addContact()">Add customer</button></div>
@@ -174,14 +182,108 @@ function renderStatus(){
     <textarea id="st" rows="2" placeholder="e.g. 10% off all coffee this week"></textarea>
     <input id="sf" type="file" accept="image/*">
     <button class="gold" onclick="postStatus()">Post</button></div>
-    ${db.statuses.map(s => `<div class="card">${s.kind === 'offer' ? '<span class="tag">Offer</span>' : ''}
+    ${db.statuses.filter(s => Date.now() - s.t < 24 * 60 * 60 * 1000).map(s => `<div class="card">${s.kind === 'offer' ? '<span class="tag">Offer</span>' : ''}
       ${s.photo ? `<img src="${s.photo}" alt="" style="width:100%;border-radius:12px;margin-top:6px">` : ''}
       <div style="margin-top:4px">${esc(s.text)}</div><div class="muted">${fmt(s.t)}</div></div>`).join('')
       || '<p class="muted">No statuses yet.</p>'}
-    <p class="muted">Statuses are saved on this device only.</p>`;
+    <p class="muted">Statuses disappear after 24 hours.</p>`;
 }
 async function postStatus(){
   const t = $('#st').value.trim();
   const photo = await shrink($('#sf').files[0]);
   if (!t && !photo) return alert('Add some text or a photo');
-  db.statuses.unshift({id: uid(), kind: $('#sk').value, text: t, photo, t:
+  db.statuses.unshift({id: uid(), kind: $('#sk').value, text: t, photo, t: Date.now()});
+  if (save()) render();
+}
+
+/* ---------- CALLS (prototype) ---------- */
+function renderCalls(){
+  return `<div class="notice">Calls are a prototype. Real voice and video calling is not connected, so calls will not reach anyone.</div>
+    <div class="card"><strong>Start a simulated call</strong>
+    ${db.chats.map(c => `<div class="row" style="justify-content:space-between;margin:8px 0">
+      <span>${esc(c.name)}</span>
+      <span><button class="ghost" onclick="startCall('${c.id}','voice')">Voice</button>
+      <button class="ghost" onclick="startCall('${c.id}','video')">Video</button></span></div>`).join('')
+      || '<p class="muted">Add a customer first.</p>'}</div>
+    <div class="card"><strong>Call history</strong>
+    ${db.calls.map(k => `<div class="muted" style="margin-top:6px">${esc(k.name)} · ${k.kind} · ${fmt(k.t)} <span class="tag">Simulated</span></div>`).join('')
+      || '<p class="muted">No calls yet.</p>'}</div>`;
+}
+function startCall(id, kind){
+  const c = db.chats.find(x => x.id === id);
+  db.calls.unshift({id: uid(), name: c.name, kind, t: Date.now()}); save();
+  $('#ov').innerHTML = `<div><strong>${kind} call to ${esc(c.name)}</strong></div>
+    <div class="muted">Simulated. Not connected.</div>
+    <button class="gold" onclick="$('#ov').classList.add('hidden');render()">End call</button>`;
+  $('#ov').classList.remove('hidden');
+  render();
+}
+
+/* ---------- DIRECTORY (simulated) ---------- */
+const CATS = ['Retail','Food & Drink','Services','Construction','Agriculture','Transport','Health','Other'];
+let reg = null; // registration in progress: {step, name, category, town, phone, desc}
+
+function renderDirectory(){
+  const mine = db.listings.find(l => l.mine);
+  const q = ($('#dq') ? $('#dq').value : '').toLowerCase();
+  const list = db.listings.filter(l => !l.mine && l.verified &&
+    (!q || l.name.toLowerCase().includes(q) || l.category.toLowerCase().includes(q) || l.town.toLowerCase().includes(q)));
+  let top;
+  if (!mine) top = regCard();
+  else if (!mine.verified) top = `<div class="card"><strong>${esc(mine.name)}</strong> <span class="tag">${mine.paid ? 'Waiting for verification' : 'Awaiting payment check'}</span>
+      <div class="muted">Reference ${esc(mine.ref)}. Your listing goes live once it is checked.</div></div>`;
+  else top = `<div class="card"><strong>${esc(mine.name)}</strong> <span class="tag">Verified</span>
+      <div class="muted">Your listing is shown in the directory.</div></div>`;
+  return `<div class="notice">Directory is a prototype. Listings are saved on this device only, so other businesses cannot see them yet. Payments and verification codes are simulated.</div>
+    ${top}
+    <input id="dq" type="search" autocomplete="off" enterkeyhint="search" placeholder="Search by name, category or town" value="${esc(q)}" oninput="render()">
+    ${list.map(l => `<div class="card"><strong>${esc(l.name)}</strong> <span class="tag">${esc(l.category)}</span>
+      <div class="muted">${esc(l.town)} · ${esc(l.phone)}</div><div style="margin-top:6px">${esc(l.desc)}</div></div>`).join('')
+      || '<p class="muted">No verified businesses to show yet.</p>'}`;
+}
+function regCard(){
+  if (!reg) reg = {step: 'form', name: '', category: CATS[0], town: '', phone: '', desc: ''};
+  if (reg.step === 'form') return `<div class="card"><strong>Register your business</strong>
+    <input id="rn" placeholder="Business name" value="${esc(reg.name)}">
+    <select id="rc">${CATS.map(c => `<option${c === reg.category ? ' selected' : ''}>${esc(c)}</option>`).join('')}</select>
+    <input id="rt" placeholder="Town" value="${esc(reg.town)}">
+    <input id="rp" placeholder="Phone number" value="${esc(reg.phone)}">
+    <textarea id="rd" rows="2" maxlength="200" placeholder="Short description (max 200 characters)">${esc(reg.desc)}</textarea>
+    <button class="gold" onclick="regNext()">Continue</button></div>`;
+  if (reg.step === 'verify') return `<div class="card"><strong>Verify your phone</strong>
+    <div class="muted">Simulated: a 6-digit code would be sent by SMS to ${esc(reg.phone)}. In this prototype, the code is 123456.</div>
+    <input id="rv" inputmode="numeric" maxlength="6" placeholder="6-digit code">
+    <button class="gold" onclick="regVerify()">Verify</button></div>`;
+  return `<div class="card"><strong>Registration fee: K10 (one-time)</strong>
+    <div class="muted">Pay to:</div><strong>${esc(db.admin.payTo || 'Payment details not set yet')}</strong>
+    <div class="muted" style="margin-top:8px">Use this reference when you pay:</div><strong>${esc(reg.ref)}</strong>
+    <input id="rr" placeholder="Your payment reference or transaction ID" style="margin-top:8px">
+    <button class="gold" onclick="regSubmit()">I have paid</button></div>`;
+}
+function regNext(){
+  reg.name = $('#rn').value.trim(); reg.category = $('#rc').value; reg.town = $('#rt').value.trim();
+  reg.phone = $('#rp').value.trim(); reg.desc = $('#rd').value.trim().slice(0, 200);
+  if (!reg.name || !reg.town || !reg.phone) return alert('Enter business name, town and phone number');
+  reg.step = 'verify'; render();
+}
+function regVerify(){
+  if ($('#rv').value.trim() !== '123456') return alert('Wrong code. In this prototype the code is 123456.');
+  reg.ref = 'YEL' + uid().slice(-5).toUpperCase();
+  reg.step = 'pay'; render();
+}
+function regSubmit(){
+  const pr = $('#rr').value.trim();
+  if (!pr) return alert('Enter your payment reference');
+  db.listings.unshift({id: uid(), mine: true, name: reg.name, category: reg.category, town: reg.town,
+    phone: reg.phone, desc: reg.desc, ref: reg.ref, payRef: pr, paid: false, verified: false, t: Date.now()});
+  reg = null; save(); render();
+}
+
+/* ---------- ADMIN DASHBOARD ---------- */
+let adminOpen = false;
+
+function renderAdmin(){
+  if (!adminOpen){
+    const first = !db.admin.pin || db.admin.pin.length !== 64;
+    return `<div class="card"><strong>${first ? 'Create admin PIN' : 'Admin login'}</strong>
+      <div class="muted">${first ? 'Choose a PIN for this device. Only you should know it.' : 'Ente
